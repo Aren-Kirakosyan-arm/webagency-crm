@@ -1,46 +1,30 @@
 # WebAgency CRM
 
-A responsive CRM dashboard for managing a small web agency's clients and projects.
+Responsive PHP + MySQL CRM starter project.
 
 ## Features
+- User registration and login
+- Password hashing using `password_hash()` and verification using `password_verify()`
+- Session protection and CSRF tokens
+- Logout via POST
+- Dashboard with project/client/task statistics
+- Create projects and clients
+- Responsive interface
 
-- Responsive dashboard UI
-- PHP + PDO database connection
-- MySQL tables for users, clients, projects, and tasks
-- Create projects through a form and persist them in MySQL
-- Prepared statements and server-side validation
-- Project budget chart using Chart.js
+## Setup with MAMP
+1. Copy this folder to `C:\MAMP\htdocs\webagency-crm`.
+2. Start Apache and MySQL in MAMP.
+3. Open phpMyAdmin and run `database/schema.sql`.
+4. Check the host, port, database username, and password in `includes/config.php`.
+5. Open `http://localhost/webagency-crm/register.php`.
+6. Register your account, then use the dashboard.
 
-## Tech stack
+## Git
+```powershell
+git add .
+git commit -m "Add secure user authentication"
+git push
+```
 
-- PHP 8+
-- MySQL / MariaDB
-- HTML5, CSS3, JavaScript
-- PDO
-- Git and GitHub
-
-## Setup
-
-1. Start Apache/PHP and MySQL in your local stack (MAMP or another local PHP environment).
-2. Open phpMyAdmin and run `database/schema.sql`.
-3. Update database host, port, username, and password in `includes/config.php`.
-4. From the project directory, run `php -S localhost:8000` if PHP is available in your terminal.
-5. Visit `http://localhost:8000`.
-
-If your local stack uses a different MySQL port, update `$dbPort` in `includes/config.php`.
-
-## Notes
-
-- Dashboard project and client counts are read from MySQL.
-- The create-project form creates a client if that client name does not exist, then saves the project.
-- Authentication pages are placeholders and are not yet production-ready.
-- Use environment variables or a private configuration file for production secrets. Never commit real credentials.
-- Chart.js and Google Fonts are loaded from CDNs, so those visual features need internet access.
-
-## Roadmap
-
-- Authentication and role-based access
-- Client management CRUD
-- Edit/delete project actions
-- Task management
-- CSRF protection and production deployment hardening
+## Security note
+For public hosting, use HTTPS, rate-limit login attempts, configure production credentials securely, and review authorization rules for client/project ownership before multi-user deployment.

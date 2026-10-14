@@ -2,195 +2,184 @@
 declare(strict_types=1);
 require_once __DIR__ . '/includes/config.php';
 require_once __DIR__ . '/includes/auth.php';
+require_login();
 
-$pageTitle = 'Dashboard | WebAgency CRM';
-$errors = [];
-$success = '';
-
-function e(?string $value): string {
-    return htmlspecialchars($value ?? '', ENT_QUOTES, 'UTF-8');
+function e(string $value): string {
+    return htmlspecialchars($value, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
 }
 
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'create_project') {
-    $name = trim((string)($_POST['project_name'] ?? ''));
-    $client = trim((string)($_POST['client_name'] ?? ''));
-    $budgetRaw = (string)($_POST['budget'] ?? '0');
-    $budget = filter_var($budgetRaw, FILTER_VALIDATE_FLOAT);
-    $deadline = trim((string)($_POST['deadline'] ?? ''));
+$error = '';
+$success = isset($_GET['created']) ? 'Проект успешно создан.' : '';
 
-    if ($name === '' || mb_strlen($name) > 180) $errors[] = 'Enter a project name (up to 180 characters).';
-    if ($client === '' || mb_strlen($client) > 150) $errors[] = 'Enter a client name (up to 150 characters).';
-    if ($budget === false || $budget < 0) $errors[] = 'Budget must be a non-negative number.';
-    if ($deadline !== '' && !preg_match('/^\d{4}-\d{2}-\d{2}$/', $deadline)) $errors[] = 'Enter a valid deadline.';
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    verify_csrf_token();
+    $projectName = trim((string)($_POST['project_name'] ?? ''));
+    $clientName = trim((string)($_POST['client_name'] ?? ''));
+    $budgetRaw = trim((string)($_POST['budget'] ?? '0'));
+    $description = trim((string)($_POST['description'] ?? ''));
+    $deadlineRaw = trim((string)($_POST['deadline'] ?? ''));
 
-    if (!$errors) {
+    if ($projectName === '' || mb_strlen($projectName) > 150) {
+        $error = 'Введите название проекта (до 150 символов).';
+    } elseif ($clientName === '' || mb_strlen($clientName) > 150) {
+        $error = 'Введите имя клиента (до 150 символов).';
+    } elseif (!is_numeric($budgetRaw) || (float)$budgetRaw < 0 || (float)$budgetRaw > 999999999) {
+        $error = 'Укажите корректный бюджет.';
+    } else {
         try {
             $pdo->beginTransaction();
+            $clientStmt = $pdo->prepare('SELECT id FROM clients WHERE name = :name LIMIT 1');
+            $clientStmt->execute(['name' => $clientName]);
+            $client = $clientStmt->fetch();
 
-            $clientStmt = $pdo->prepare('SELECT id FROM clients WHERE name = ? LIMIT 1');
-            $clientStmt->execute([$client]);
-            $clientId = $clientStmt->fetchColumn();
-
-            if (!$clientId) {
-                $insertClient = $pdo->prepare('INSERT INTO clients (name) VALUES (?)');
-                $insertClient->execute([$client]);
+            if ($client) {
+                $clientId = (int)$client['id'];
+            } else {
+                $insertClient = $pdo->prepare('INSERT INTO clients (name) VALUES (:name)');
+                $insertClient->execute(['name' => $clientName]);
                 $clientId = (int)$pdo->lastInsertId();
             }
 
-            $stmt = $pdo->prepare(
-                "INSERT INTO projects (client_id, name, budget, status, progress, deadline)
-                 VALUES (:client_id, :name, :budget, 'planning', 0, :deadline)"
+            $insertProject = $pdo->prepare(
+                'INSERT INTO projects (client_id, name, description, budget, status, progress, deadline)
+                 VALUES (:client_id, :name, :description, :budget, :status, 0, :deadline)'
             );
-            $stmt->execute([
-                ':client_id' => $clientId,
-                ':name' => $name,
-                ':budget' => $budget,
-                ':deadline' => $deadline !== '' ? $deadline : null,
+            $insertProject->execute([
+                'client_id' => $clientId,
+                'name' => $projectName,
+                'description' => $description,
+                'budget' => (float)$budgetRaw,
+                'status' => 'planning',
+                'deadline' => $deadlineRaw !== '' ? $deadlineRaw : null,
             ]);
-
             $pdo->commit();
             header('Location: index.php?created=1');
             exit;
         } catch (Throwable $exception) {
             if ($pdo->inTransaction()) $pdo->rollBack();
-            error_log('Create project failed: ' . $exception->getMessage());
-            $errors[] = 'Could not save the project. Check the database connection and schema.';
+            error_log($exception->getMessage());
+            $error = 'Не удалось сохранить проект. Проверьте базу данных и попробуйте снова.';
         }
     }
 }
 
-if (isset($_GET['created'])) $success = 'Project saved successfully.';
-
+$stats = [
+    'clients' => (int)$pdo->query('SELECT COUNT(*) FROM clients')->fetchColumn(),
+    'projects' => (int)$pdo->query('SELECT COUNT(*) FROM projects')->fetchColumn(),
+    'tasks' => (int)$pdo->query("SELECT COUNT(*) FROM tasks WHERE status <> 'completed'")->fetchColumn(),
+    'completed' => (int)$pdo->query("SELECT COUNT(*) FROM projects WHERE status = 'completed'")->fetchColumn(),
+];
 $projects = $pdo->query(
-    'SELECT p.id, p.name, p.budget, p.status, p.progress, p.deadline, p.created_at,
+    'SELECT p.id, p.name, p.description, p.budget, p.status, p.progress, p.deadline, p.created_at,
             c.name AS client_name
-     FROM projects p
-     LEFT JOIN clients c ON c.id = p.client_id
-     ORDER BY p.created_at DESC, p.id DESC'
+     FROM projects p LEFT JOIN clients c ON c.id = p.client_id
+     ORDER BY p.created_at DESC LIMIT 10'
 )->fetchAll();
-
-$activeProjects = 0;
-$completedProjects = 0;
-$totalBudget = 0.0;
-foreach ($projects as $project) {
-    if ($project['status'] === 'completed') $completedProjects++;
-    else $activeProjects++;
-    $totalBudget += (float)$project['budget'];
-}
-$clientCount = (int)$pdo->query('SELECT COUNT(*) FROM clients')->fetchColumn();
-$taskCount = (int)$pdo->query("SELECT COUNT(*) FROM tasks WHERE status <> 'completed'")->fetchColumn();
+$user = current_user();
 ?>
 <!DOCTYPE html>
-<html lang="en">
+<html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="description" content="WebAgency CRM — manage clients, projects and tasks.">
-    <title><?= e($pageTitle) ?></title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Dashboard — WebAgency CRM</title>
     <link rel="stylesheet" href="assets/css/style.css">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <script src="assets/js/app.js" defer></script>
 </head>
 <body>
-<div class="app">
+<div class="app-shell">
     <aside class="sidebar" id="sidebar">
-        <a href="index.php" class="brand"><span class="brand-icon">W</span><span>WebAgency<span class="brand-light">CRM</span></span></a>
-        <div class="menu-label">WORKSPACE</div>
-        <nav class="navigation">
-            <a href="index.php" class="nav-link active"><span>▦</span> Dashboard</a>
-            <a href="#projects" class="nav-link"><span>▤</span> Projects</a>
-            <a href="#clients" class="nav-link"><span>♙</span> Clients</a>
-            <a href="#tasks" class="nav-link"><span>✓</span> Tasks</a>
-            <a href="#analytics" class="nav-link"><span>▥</span> Analytics</a>
+        <a class="brand" href="index.php"><span class="brand-mark">W</span><span>WebAgency <b>CRM</b></span></a>
+        <nav class="nav">
+            <a class="nav-link active" href="index.php">▦ <span>Dashboard</span></a>
+            <a class="nav-link" href="#projects">▤ <span>Проекты</span></a>
+            <a class="nav-link" href="#clients">♙ <span>Клиенты</span></a>
+            <a class="nav-link" href="#tasks">☑ <span>Задачи</span></a>
         </nav>
-        <div class="menu-label">PREFERENCES</div>
-        <nav class="navigation"><a href="#settings" class="nav-link"><span>⚙</span> Settings</a></nav>
         <div class="sidebar-bottom">
-            <div class="upgrade-card"><div class="upgrade-icon">✦</div><h3>Work smarter</h3><p>Keep your clients and projects organized in one place.</p><a href="#projects">Explore projects →</a></div>
-            <div class="profile"><div class="avatar">AK</div><div class="profile-info"><strong>Aren Kirakosyan</strong><span>Workspace owner</span></div></div>
+            <div class="user-mini"><div class="avatar"><?= e(mb_strtoupper(mb_substr($user['name'], 0, 1))) ?></div><div><strong><?= e($user['name']) ?></strong><small><?= e($user['email']) ?></small></div></div>
+            <form action="logout.php" method="post">
+                <input type="hidden" name="csrf_token" value="<?= e(csrf_token()) ?>">
+                <button class="logout-button" type="submit">↪ Выйти</button>
+            </form>
         </div>
     </aside>
 
-    <main class="main">
+    <main class="main-content">
         <header class="topbar">
-            <button class="menu-toggle" id="menuToggle" aria-label="Toggle menu">☰</button>
-            <div class="breadcrumb">Workspace <span>/</span> <strong>Dashboard</strong></div>
-            <div class="topbar-right"><span class="today" id="today"></span><div class="avatar small-avatar">AK</div></div>
+            <button class="menu-toggle" id="menuToggle" aria-label="Открыть меню">☰</button>
+            <div><span class="eyebrow">WORKSPACE</span><h1>Dashboard</h1></div>
+            <div class="topbar-right"><span class="status-dot"></span><span>Локальная CRM</span><div class="avatar"><?= e(mb_strtoupper(mb_substr($user['name'], 0, 1))) ?></div></div>
         </header>
 
-        <section class="content">
-            <div class="welcome-row">
-                <div><div class="eyebrow">OVERVIEW</div><h1>Good to see you, Aren <span>✦</span></h1><p class="subtitle">Here's what's happening with your agency today.</p></div>
-                <button class="primary-button" id="newProject"><span>＋</span> New project</button>
-            </div>
-
-            <?php if ($success): ?><div class="alert success"><?= e($success) ?></div><?php endif; ?>
-            <?php if ($errors): ?><div class="alert error"><?php foreach ($errors as $error): ?><div><?= e($error) ?></div><?php endforeach; ?></div><?php endif; ?>
-
-            <div class="stats-grid">
-                <article class="stat-card"><div class="stat-top"><span>Total project budget</span><span class="stat-icon purple">$</span></div><div class="stat-value">$<?= number_format($totalBudget, 0) ?></div><div class="stat-bottom"><span>From saved projects</span></div></article>
-                <article class="stat-card"><div class="stat-top"><span>Active projects</span><span class="stat-icon blue">▤</span></div><div class="stat-value"><?= str_pad((string)$activeProjects, 2, '0', STR_PAD_LEFT) ?></div><div class="stat-bottom"><span>Not completed</span></div></article>
-                <article class="stat-card"><div class="stat-top"><span>Total clients</span><span class="stat-icon orange">♙</span></div><div class="stat-value"><?= $clientCount ?></div><div class="stat-bottom"><span>Saved in database</span></div></article>
-                <article class="stat-card"><div class="stat-top"><span>Open tasks</span><span class="stat-icon green">✓</span></div><div class="stat-value"><?= $taskCount ?></div><div class="stat-bottom"><span><?= $completedProjects ?> completed projects</span></div></article>
-            </div>
-
-            <div class="dashboard-grid">
-                <section class="panel" id="analytics">
-                    <div class="panel-header"><div><h2>Project budget overview</h2><p>Budget of your latest projects</p></div></div>
-                    <div class="chart-wrap"><canvas id="revenueChart"></canvas></div>
-                </section>
-                <section class="panel" id="tasks">
-                    <div class="panel-header"><div><h2>Getting started</h2><p>Next steps for your workspace</p></div></div>
-                    <div class="task-list">
-                        <div class="task-item"><span class="custom-check checked">✓</span><span class="task-text"><strong>Connect MySQL database</strong><small>Database connection configured</small></span></div>
-                        <div class="task-item"><span class="custom-check"></span><span class="task-text"><strong>Add your first project</strong><small>Projects are saved in MySQL</small></span></div>
-                        <div class="task-item"><span class="custom-check"></span><span class="task-text"><strong>Publish updates to GitHub</strong><small>Keep your portfolio up to date</small></span></div>
-                    </div>
-                    <div class="task-footer">This dashboard currently uses your local database.</div>
-                </section>
-            </div>
-
-            <section class="panel projects-panel" id="projects">
-                <div class="panel-header"><div><h2>Recent projects</h2><p>Projects saved in your database</p></div><button class="text-link" id="viewAll">Total: <?= count($projects) ?> projects</button></div>
-                <div class="table-scroll">
-                    <table>
-                        <thead><tr><th>PROJECT NAME</th><th>CLIENT</th><th>STATUS</th><th>PROGRESS</th><th>BUDGET</th></tr></thead>
-                        <tbody id="projectTable">
-                        <?php if (!$projects): ?>
-                            <tr><td colspan="5" class="empty-state">No projects yet. Click “New project” to create one.</td></tr>
-                        <?php else: foreach ($projects as $project):
-                            $status = (string)$project['status'];
-                            $statusClass = in_array($status, ['planning','in_progress','review','completed'], true) ? $status : 'planning';
-                        ?>
-                            <tr>
-                                <td><div class="project-name"><span class="project-logo violet"><?= e(strtoupper(substr($project['name'], 0, 1))) ?></span><span><strong><?= e($project['name']) ?></strong><small><?= $project['deadline'] ? 'Due ' . e($project['deadline']) : 'Agency project' ?></small></span></div></td>
-                                <td><?= e($project['client_name'] ?? 'No client') ?></td>
-                                <td><span class="status <?= e($statusClass) ?>"><?= e(ucwords(str_replace('_', ' ', $status))) ?></span></td>
-                                <td><div class="progress-cell"><div class="progress-bar"><span style="width: <?= min(100, (int)$project['progress']) ?>%"></span></div><small><?= min(100, (int)$project['progress']) ?>%</small></div></td>
-                                <td class="budget">$<?= number_format((float)$project['budget'], 2) ?></td>
-                            </tr>
-                        <?php endforeach; endif; ?>
-                        </tbody>
-                    </table>
-                </div>
-            </section>
-            <footer class="footer"><span>© <?= date('Y') ?> WebAgency CRM</span><span>PHP · MySQL · JavaScript · CSS</span></footer>
+        <section class="welcome-row">
+            <div><h2>Добро пожаловать, <?= e($user['name']) ?> 👋</h2><p>Вот что происходит в вашей веб-студии сегодня.</p></div>
+            <button class="primary-button" id="newProjectBtn" type="button">＋ Новый проект</button>
         </section>
+
+        <?php if ($error): ?><div class="alert error" role="alert"><?= e($error) ?></div><?php endif; ?>
+        <?php if ($success): ?><div class="alert success" role="status"><?= e($success) ?></div><?php endif; ?>
+
+        <section class="stats-grid">
+            <article class="stat-card"><div class="stat-icon purple">▤</div><span>Всего проектов</span><strong><?= $stats['projects'] ?></strong><small>Все проекты в системе</small></article>
+            <article class="stat-card"><div class="stat-icon blue">♙</div><span>Клиенты</span><strong><?= $stats['clients'] ?></strong><small>Добавленные клиенты</small></article>
+            <article class="stat-card"><div class="stat-icon orange">☑</div><span>Открытые задачи</span><strong><?= $stats['tasks'] ?></strong><small>Ещё требуют внимания</small></article>
+            <article class="stat-card"><div class="stat-icon green">✓</div><span>Завершено</span><strong><?= $stats['completed'] ?></strong><small>Успешно выполненные проекты</small></article>
+        </section>
+
+        <section class="content-grid">
+            <article class="panel project-panel" id="projects">
+                <div class="panel-heading"><div><h3>Последние проекты</h3><p>Недавно добавленные проекты вашей команды</p></div><button class="text-button" id="newProjectBtn2" type="button">＋ Добавить</button></div>
+                <?php if (!$projects): ?>
+                    <div class="empty-state"><div class="empty-icon">▤</div><strong>Пока нет проектов</strong><p>Создайте первый проект, чтобы начать работу.</p><button class="primary-button" id="emptyNewProjectBtn" type="button">Создать проект</button></div>
+                <?php else: ?>
+                    <div class="table-wrap"><table><thead><tr><th>Проект</th><th>Клиент</th><th>Статус</th><th>Прогресс</th><th>Бюджет</th></tr></thead><tbody>
+                    <?php foreach ($projects as $project): ?>
+                        <?php
+                        $statusLabels = ['planning' => 'Планирование', 'in_progress' => 'В работе', 'review' => 'На проверке', 'completed' => 'Завершён'];
+                        ?>
+                        <tr>
+                            <td><strong><?= e($project['name']) ?></strong><small class="subline"><?= e($project['description'] ?: 'Без описания') ?></small></td>
+                            <td><?= e($project['client_name'] ?? '—') ?></td>
+                            <td><span class="badge <?= e($project['status']) ?>"><?= e($statusLabels[$project['status']] ?? $project['status']) ?></span></td>
+                            <td><div class="progress-line"><span style="width: <?= max(0, min(100, (int)$project['progress'])) ?>%"></span></div><small><?= (int)$project['progress'] ?>%</small></td>
+                            <td><?= number_format((float)$project['budget'], 0, ',', ' ') ?> ֏</td>
+                        </tr>
+                    <?php endforeach; ?>
+                    </tbody></table></div>
+                <?php endif; ?>
+            </article>
+            <article class="panel chart-panel">
+                <div class="panel-heading"><div><h3>Обзор проектов</h3><p>Распределение по статусам</p></div></div>
+                <div class="chart-wrap"><canvas id="projectsChart"></canvas></div>
+                <div class="chart-legend"><span><i class="legend-dot planning-dot"></i> Планирование</span><span><i class="legend-dot progress-dot"></i> В работе</span><span><i class="legend-dot done-dot"></i> Завершено</span></div>
+            </article>
+        </section>
+        <footer class="footer">© <?= date('Y') ?> WebAgency CRM <span>Сделано для эффективной работы</span></footer>
     </main>
 </div>
 
 <div class="modal-backdrop" id="projectModal" aria-hidden="true">
-    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
-        <div class="modal-heading"><div><h2 id="modalTitle">Create new project</h2><p>Save a project to your MySQL database.</p></div><button class="modal-close" id="closeModal" aria-label="Close">×</button></div>
-        <form method="post" action="index.php" id="projectForm">
-            <input type="hidden" name="action" value="create_project">
-            <label for="projectName">Project name</label><input id="projectName" name="project_name" type="text" placeholder="e.g. Website redesign" maxlength="180" required>
-            <label for="clientName">Client name</label><input id="clientName" name="client_name" type="text" placeholder="e.g. John Smith" maxlength="150" required>
-            <label for="projectBudget">Budget (USD)</label><input id="projectBudget" name="budget" type="number" min="0" step="0.01" placeholder="2500" required>
-            <label for="projectDeadline">Deadline (optional)</label><input id="projectDeadline" name="deadline" type="date">
-            <button type="submit" class="primary-button full-button">Save project</button>
+    <section class="modal-card" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+        <div class="modal-heading"><div><h2 id="modalTitle">Новый проект</h2><p>Заполните основные данные проекта.</p></div><button type="button" class="close-modal" id="closeModal" aria-label="Закрыть">×</button></div>
+        <form method="post" action="index.php" class="project-form">
+            <input type="hidden" name="csrf_token" value="<?= e(csrf_token()) ?>">
+            <label>Название проекта<input name="project_name" maxlength="150" required placeholder="Например, Landing page"></label>
+            <label>Имя клиента<input name="client_name" maxlength="150" required placeholder="Например, Arman Petrosyan"></label>
+            <label>Бюджет (֏)<input name="budget" type="number" min="0" max="999999999" step="1" value="0" required></label>
+            <label>Срок выполнения<input name="deadline" type="date"></label>
+            <label class="full-field">Описание<textarea name="description" rows="3" placeholder="Краткое описание проекта"></textarea></label>
+            <div class="modal-actions"><button type="button" class="secondary-button" id="cancelModal">Отмена</button><button class="primary-button" type="submit">Сохранить проект</button></div>
         </form>
-    </div>
+    </section>
 </div>
+<script>
+window.crmChartData = <?= json_encode([
+    'planning' => (int)$pdo->query("SELECT COUNT(*) FROM projects WHERE status='planning'")->fetchColumn(),
+    'in_progress' => (int)$pdo->query("SELECT COUNT(*) FROM projects WHERE status='in_progress'")->fetchColumn(),
+    'completed' => (int)$pdo->query("SELECT COUNT(*) FROM projects WHERE status='completed'")->fetchColumn(),
+], JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_AMP | JSON_HEX_QUOT) ?>;
+</script>
+<script src="assets/js/app.js"></script>
 </body>
 </html>
