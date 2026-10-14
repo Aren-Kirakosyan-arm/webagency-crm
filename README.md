@@ -1,30 +1,25 @@
 # WebAgency CRM
 
-Responsive PHP + MySQL CRM starter project.
+A lightweight CRM for a web agency built with PHP 8.3, MySQL, HTML, CSS, and vanilla JavaScript. No framework is required.
 
 ## Features
-- User registration and login
-- Password hashing using `password_hash()` and verification using `password_verify()`
-- Session protection and CSRF tokens
-- Logout via POST
-- Dashboard with project/client/task statistics
-- Create projects and clients
-- Responsive interface
+- User registration and login with password hashing and CSRF protection.
+- Dashboard with client, project, and open-task statistics.
+- Client management: create, search, edit, and delete.
+- Project management: create, edit, delete, client association, budget, status, progress, and deadline.
+- Task management: create, edit, delete, project association, priority, due date, search, and status filtering.
+- Responsive interface and MySQL PDO prepared statements.
 
-## Setup with MAMP
-1. Copy this folder to `C:\MAMP\htdocs\webagency-crm`.
-2. Start Apache and MySQL in MAMP.
-3. Open phpMyAdmin and run `database/schema.sql`.
-4. Check the host, port, database username, and password in `includes/config.php`.
-5. Open `http://localhost/webagency-crm/register.php`.
-6. Register your account, then use the dashboard.
+## Setup (MAMP / Windows)
+1. Copy the `webagency-crm` folder into `C:\MAMP\htdocs`.
+2. Create a MySQL database by importing `database/schema.sql` in phpMyAdmin.
+3. Check `includes/config.php` and set the correct MySQL host, port, username, and password for your MAMP installation.
+4. Enable `pdo_mysql` in the PHP configuration used by both MAMP and the command line.
+5. Open `http://localhost:81/webagency-crm/register.php` and create an account.
+6. Open `http://localhost:81/webagency-crm/index.php`.
 
-## Git
-```powershell
-git add .
-git commit -m "Add secure user authentication"
-git push
-```
+## Validation
+Run `php -l index.php`, `php -l clients.php`, `php -l projects.php`, and `php -l tasks.php` from the project directory.
 
-## Security note
-For public hosting, use HTTPS, rate-limit login attempts, configure production credentials securely, and review authorization rules for client/project ownership before multi-user deployment.
+## Security notes
+Do not commit real credentials. Keep `includes/config.php` local if it contains environment-specific credentials. Use `.env.example` as a template only; this project currently reads its connection settings from `includes/config.php`.
