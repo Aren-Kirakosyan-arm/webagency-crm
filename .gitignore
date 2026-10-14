@@ -1,5 +1,5 @@
-/vendor/
 /.env
-.DS_Store
-Thumbs.db
+/vendor/
+/.DS_Store
+/Thumbs.db
 *.log
