@@ -4,6 +4,14 @@
 
 **Stack:** PHP 8.3 · MySQL · PDO · HTML5 · CSS3 · Vanilla JavaScript
 
+## 📸 Preview
+
+<p align="center">
+  <img src="https://placehold.co/1200x700/png?text=WebAgency+CRM" alt="WebAgency CRM preview" width="900" />
+</p>
+
+> Replace the preview above with a real screenshot from the running application when publishing a final portfolio version.
+
 ## Overview
 
 WebAgency CRM is a database-driven CRM built for a small web agency. The project focuses on practical business workflows, a responsive interface, and secure server-side handling without a framework.
